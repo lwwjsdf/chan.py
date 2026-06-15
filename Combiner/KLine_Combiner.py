@@ -1,4 +1,8 @@
-from typing import Generic, Iterable, List, Optional, Self, TypeVar, Union, overload
+from typing import Generic, Iterable, List, Optional, TypeVar, Union, overload
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from Common.cache import make_cache
 from Common.CEnum import FX_TYPE, KLINE_DIR
@@ -162,10 +166,10 @@ class CKLine_Combiner(Generic[T]):
     def __iter__(self) -> Iterable[T]:
         yield from self.lst
 
-    def set_pre(self, _pre: Self | None):
+    def set_pre(self, _pre: Optional[Self]):
         self.__pre = _pre
         self.clean_cache()
 
-    def set_next(self, _next: Self | None):
+    def set_next(self, _next: Optional[Self]):
         self.__next = _next
         self.clean_cache()

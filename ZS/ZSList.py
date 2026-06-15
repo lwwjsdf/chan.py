@@ -1,4 +1,4 @@
-from typing import List, Union, overload
+from typing import List, Optional, Union, overload
 
 from Bi.Bi import CBi
 from Bi.BiList import CBiList
@@ -129,7 +129,7 @@ class CZSList:
             raise Exception(f"unknown zs_algo {self.config.zs_algo}")
         self.update_last_pos(seg_lst)
 
-    def update_overseg_zs(self, bi: CBi | CSeg):
+    def update_overseg_zs(self, bi: Union[CBi, CSeg]):
         if len(self.zs_lst) and len(self.free_item_lst) == 0:
             if bi.next is None:
                 return

@@ -667,7 +667,7 @@ class CPlotDriver:
         self,
         meta: CChanPlotMeta,
         ax: Axes,
-        markers: Dict[CTime | str, Tuple[str, Literal['up', 'down'], str] | Tuple[str, Literal['up', 'down']]],
+        markers: Dict[Union[CTime, str], Union[Tuple[str, Literal['up', 'down'], str], Tuple[str, Literal['up', 'down']]]],
         arrow_l=0.15,
         arrow_h_r=0.2,
         arrow_w=1,
