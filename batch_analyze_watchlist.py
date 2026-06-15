@@ -49,6 +49,7 @@ def analyze_chan(raw_code: str, name: str, begin_date: str = "2025-09-04"):
     bsp_list = kl_list.bs_point_lst.getSortedBspList()
 
     last_seg = seg_list[-1] if len(seg_list) > 0 else None
+    last_bi = bi_list[-1] if len(bi_list) > 0 else None
 
     ongoing_first_up = False
     real_up_trend = False
@@ -99,6 +100,8 @@ def analyze_chan(raw_code: str, name: str, begin_date: str = "2025-09-04"):
         "last_seg_dir": last_seg.dir.name if last_seg else "",
         "last_seg_sure": last_seg.is_sure if last_seg else "",
         "last_seg_zs_cnt": last_seg.get_multi_bi_zs_cnt() if last_seg else 0,
+        "last_bi_dir": last_bi.dir.name if last_bi else "",
+        "last_bi_is_up": last_bi.is_up() if last_bi else False,
         "ongoing_first_up": ongoing_first_up,
         "real_up_trend": real_up_trend,
         "first_up_finished": first_up_finished,
@@ -162,20 +165,56 @@ def main():
     all_fieldnames = [
         "code", "name", "baostock_code", "klu_cnt", "bi_cnt", "seg_cnt", "zs_cnt", "bsp_cnt",
         "last_seg_dir", "last_seg_sure", "last_seg_zs_cnt",
+        "last_bi_dir", "last_bi_is_up",
         "ongoing_first_up", "real_up_trend", "first_up_finished", "potential_second_up",
         "last_bsp_time", "last_bsp_type", "last_bsp_buy", "status", "error",
     ]
 
     suffix = f"_batch{args.batch_idx}" if args.batch_size > 0 else ""
-    write_csv(os.path.join(output_dir, f"all_results{suffix}.csv"), results, all_fieldnames)
+
+    def append_csv(path, row, is_header=False):
+        write_header = is_header or not os.path.exists(path)
+        with open(path, "a", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=all_fieldnames)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+
+    all_results_path = os.path.join(output_dir, f"all_results{suffix}.csv")
+    errors_path = os.path.join(output_dir, f"errors{suffix}.csv")
+
+    for idx, (raw_code, name) in enumerate(rows, 1):
+        raw_code = raw_code.strip()
+        name = name.strip()
+        t0 = time.time()
+        print(f"[{idx}/{total}] {raw_code} {name} ...", end=" ", flush=True)
+        try:
+            res = analyze_chan(raw_code, name, args.begin)
+            results.append(res)
+            append_csv(all_results_path, res, is_header=(idx == 1))
+            print(f"ok {time.time()-t0:.2f}s")
+        except Exception as e:
+            err = {"code": raw_code, "name": name, "status": "error", "error": str(e)}
+            errors.append(err)
+            with open(errors_path, "a", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(f, fieldnames=["code", "name", "status", "error"])
+                if idx == 1 or not os.path.getsize(errors_path):
+                    writer.writeheader()
+                writer.writerow(err)
+            print(f"err {time.time()-t0:.2f}s: {e}")
+
+    # 输出分类
+    ongoing_first_up = [r for r in results if r["ongoing_first_up"]]
+    potential_second_up = [r for r in results if r["potential_second_up"]]
+
+    def write_csv(path, rows, fieldnames):
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
     write_csv(os.path.join(output_dir, f"ongoing_first_up{suffix}.csv"), ongoing_first_up, all_fieldnames)
     write_csv(os.path.join(output_dir, f"potential_second_up{suffix}.csv"), potential_second_up, all_fieldnames)
-
-    if errors:
-        with open(os.path.join(output_dir, f"errors{suffix}.csv"), "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=["code", "name", "status", "error"])
-            writer.writeheader()
-            writer.writerows(errors)
 
     print(f"\nDone. Total: {total}, Success: {len(results)}, Errors: {len(errors)}")
     print(f"Ongoing first up: {len(ongoing_first_up)}")
