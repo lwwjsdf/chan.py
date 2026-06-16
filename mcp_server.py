@@ -9,6 +9,7 @@ MCP 协议：JSON-RPC 2.0 over stdin/stdout
 - analyze_stock: 分析单只股票缠论状态
 - get_bsp_list: 获取买卖点列表
 - get_key_levels: 获取关键价位
+- get_signal: 获取交易信号
 - scan_watchlist: 扫描股票列表
 
 使用方式：
@@ -23,385 +24,24 @@ Claude Desktop 配置示例：
     }
   }
 }
+
+Hermes 配置见 ~/.hermes/config.yaml
 """
 
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
+
+import chan_api
 
 
-LEVEL_MAP = {
-    "daily": "K_DAY",
-    "day": "K_DAY",
-    "d": "K_DAY",
-    "30m": "K_30M",
-    "30min": "K_30M",
-    "60m": "K_60M",
-    "60min": "K_60M",
-}
-
-
-def _import_chan():
-    from Chan import CChan
-    from ChanConfig import CChanConfig
-    from Common.CEnum import AUTYPE, KL_TYPE
-    return CChan, CChanConfig, AUTYPE, KL_TYPE
-
-
-def _resolve_level(level: str):
-    CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
-    enum_name = LEVEL_MAP.get(level.lower(), "K_DAY")
-    return getattr(KL_TYPE, enum_name)
-
-
-def get_default_begin(level) -> str:
-    from Common.CEnum import KL_TYPE
-    if level == KL_TYPE.K_30M:
-        return "2026-03-13"
-    return "2025-09-04"
-
-
-def create_chan_config(CChanConfig):
-    return CChanConfig({
-        "bi_strict": True,
-        "trigger_step": False,
-        "divergence_rate": 0.9,
-        "min_zs_cnt": 1,
-        "bsp2_follow_1": False,
-        "bsp3_follow_1": False,
-        "bs1_peak": False,
-        "macd_algo": "peak",
-        "bs_type": "1,2,3a,1p,2s,3b",
-        "print_warning": False,
-        "zs_algo": "normal",
-    })
-
-
-def _resolve_level(level: str):
-    CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
-    enum_name = LEVEL_MAP.get(level.lower(), "K_DAY")
-    return getattr(KL_TYPE, enum_name)
-
-
-def analyze_stock(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
-    try:
-        CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
-        kl_type = _resolve_level(level)
-        if begin_date is None:
-            begin_date = get_default_begin(kl_type)
-
-        chan = CChan(
-            code=code,
-            begin_time=begin_date,
-            end_time=None,
-            data_src="custom:PgStockAPI.CPgStock",
-            lv_list=[kl_type],
-            config=create_chan_config(CChanConfig),
-            autype=AUTYPE.QFQ,
-        )
-
-        kl_list = chan[0]
-        bi_list = kl_list.bi_list
-        seg_list = kl_list.seg_list
-        zs_list = kl_list.zs_list
-        bsp_list = kl_list.bs_point_lst.getSortedBspList()
-
-        last_bi = bi_list[-1] if bi_list else None
-        last_seg = seg_list[-1] if seg_list else None
-        last_bsp = bsp_list[-1] if bsp_list else None
-
-        latest_bsp = None
-        if last_bsp:
-            latest_bsp = {
-                "time": last_bsp.klu.time.to_str(),
-                "type": last_bsp.type2str(),
-                "is_buy": last_bsp.is_buy,
-                "price": round(last_bsp.bi.get_end_val(), 3),
-            }
-
-        key_levels = {}
-        if last_bi:
-            key_levels["last_bi_low"] = round(last_bi._low(), 3)
-            key_levels["last_bi_high"] = round(last_bi._high(), 3)
-        if last_seg:
-            key_levels["last_seg_low"] = round(last_seg._low(), 3)
-            key_levels["last_seg_high"] = round(last_seg._high(), 3)
-        if zs_list:
-            latest_zs = zs_list[-1]
-            key_levels["latest_zs_low"] = round(latest_zs.low, 3)
-            key_levels["latest_zs_high"] = round(latest_zs.high, 3)
-            key_levels["latest_zs_mid"] = round(latest_zs.mid, 3)
-
-        return {
-            "code": code,
-            "level": level,
-            "klu_count": len(kl_list.lst),
-            "bi_count": len(bi_list),
-            "seg_count": len(seg_list),
-            "zs_count": len(zs_list),
-            "bsp_count": len(bsp_list),
-            "last_bi_dir": last_bi.dir.name if last_bi else "",
-            "last_bi_is_up": last_bi.is_up() if last_bi else False,
-            "last_seg_dir": last_seg.dir.name if last_seg else "",
-            "last_seg_sure": last_seg.is_sure if last_seg else False,
-            "latest_bsp": latest_bsp,
-            "key_levels": key_levels,
-            "status": "ok",
-            "error": "",
-        }
-    except Exception as e:
-        import traceback
-        return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
-
-
-def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
-    try:
-        CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
-        kl_type = _resolve_level(level)
-        if begin_date is None:
-            begin_date = get_default_begin(kl_type)
-
-        chan = CChan(
-            code=code,
-            begin_time=begin_date,
-            end_time=None,
-            data_src="custom:PgStockAPI.CPgStock",
-            lv_list=[kl_type],
-            config=create_chan_config(CChanConfig),
-            autype=AUTYPE.QFQ,
-        )
-
-        bsp_list = chan[0].bs_point_lst.getSortedBspList()
-        result = []
-        for bsp in bsp_list[-limit:]:
-            result.append({
-                "time": bsp.klu.time.to_str(),
-                "type": bsp.type2str(),
-                "is_buy": bsp.is_buy,
-                "price": round(bsp.bi.get_end_val(), 3),
-            })
-
-        return {"code": code, "level": level, "bsp_list": result, "status": "ok", "error": ""}
-    except Exception as e:
-        import traceback
-        return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
-
-
-def get_key_levels(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
-    res = analyze_stock(code, level, begin_date)
-    if res.get("status") == "error":
-        return res
+def _result_content(result: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "code": code,
-        "level": level,
-        "key_levels": res.get("key_levels", {}),
-        "latest_bsp": res.get("latest_bsp"),
-        "status": "ok",
-        "error": "",
+        "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
+        "isError": result.get("status") == "error",
     }
 
-
-def get_signal(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
-    """
-    生成交易信号：基于当前笔、线段、中枢、最新买卖点给出 action 建议。
-    """
-    try:
-        CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
-        kl_type = _resolve_level(level)
-        if begin_date is None:
-            begin_date = get_default_begin(kl_type)
-
-        chan = CChan(
-            code=code,
-            begin_time=begin_date,
-            end_time=None,
-            data_src="custom:PgStockAPI.CPgStock",
-            lv_list=[kl_type],
-            config=create_chan_config(CChanConfig),
-            autype=AUTYPE.QFQ,
-        )
-
-        kl_list = chan[0]
-        bi_list = kl_list.bi_list
-        seg_list = kl_list.seg_list
-        zs_list = kl_list.zs_list
-        bsp_list = kl_list.bs_point_lst.getSortedBspList()
-
-        last_bi = bi_list[-1] if bi_list else None
-        last_seg = seg_list[-1] if seg_list else None
-        last_bsp = bsp_list[-1] if bsp_list else None
-        latest_zs = zs_list[-1] if zs_list else None
-
-        current_price = None
-        last_klu = None
-        if kl_list.lst and kl_list.lst[-1].lst:
-            last_klu = kl_list.lst[-1].lst[-1]
-            current_price = round(last_klu.close, 3)
-
-        last_klu_time = last_klu.time.to_str() if last_klu else ""
-
-        # 构建 key_levels
-        key_levels = {}
-        if last_bi:
-            key_levels["last_bi_low"] = round(last_bi._low(), 3)
-            key_levels["last_bi_high"] = round(last_bi._high(), 3)
-        if last_seg:
-            key_levels["last_seg_low"] = round(last_seg._low(), 3)
-            key_levels["last_seg_high"] = round(last_seg._high(), 3)
-        if latest_zs:
-            key_levels["zs_low"] = round(latest_zs.low, 3)
-            key_levels["zs_high"] = round(latest_zs.high, 3)
-            key_levels["zs_mid"] = round(latest_zs.mid, 3)
-
-        # 当前笔状态
-        current_bi_state = {
-            "direction": last_bi.dir.name if last_bi else "",
-            "start_price": round(last_bi.get_begin_val(), 3) if last_bi else None,
-            "end_price": round(last_bi.get_end_val(), 3) if last_bi else None,
-            "is_up": last_bi.is_up() if last_bi else False,
-            "is_finished": last_bi.is_sure if hasattr(last_bi, "is_sure") else False,
-        }
-
-        # 最新买卖点
-        latest_bsp_info = None
-        if last_bsp:
-            latest_bsp_info = {
-                "time": last_bsp.klu.time.to_str(),
-                "type": last_bsp.type2str(),
-                "is_buy": last_bsp.is_buy,
-                "price": round(last_bsp.bi.get_end_val(), 3),
-            }
-
-        # 生成 action 建议
-        action = "hold"
-        reason = ""
-        strength = "none"
-
-        if latest_zs and current_price is not None:
-            if last_bsp and last_bsp.is_buy:
-                # 刚出现买点，建议买入/持有
-                action = "buy"
-                reason = f"{level} 级别出现 {last_bsp.type2str()} 买点，价格 {round(last_bsp.bi.get_end_val(), 3)}"
-                strength = "strong" if last_bsp.type2str() in ("1", "2", "3a") else "medium"
-            elif last_bsp and not last_bsp.is_buy:
-                # 刚出现卖点，建议减仓
-                action = "reduce"
-                reason = f"{level} 级别出现 {last_bsp.type2str()} 卖点，价格 {round(last_bsp.bi.get_end_val(), 3)}"
-                strength = "strong" if last_bsp.type2str() in ("1", "2", "2s", "3a") else "medium"
-            elif current_price >= latest_zs.high:
-                action = "watch_reduce"
-                reason = f"价格 {current_price} 高于中枢上轨 {latest_zs.high}，警惕卖点形成"
-                strength = "weak"
-            elif current_price <= latest_zs.low:
-                action = "watch_buy"
-                reason = f"价格 {current_price} 低于中枢下轨 {latest_zs.low}，关注买点机会"
-                strength = "weak"
-            elif current_price >= latest_zs.mid:
-                action = "hold"
-                reason = f"价格 {current_price} 在中枢上半区 {latest_zs.mid}-{latest_zs.high}，持有观察"
-                strength = "weak"
-            else:
-                action = "hold"
-                reason = f"价格 {current_price} 在中枢下半区 {latest_zs.low}-{latest_zs.mid}，持有观察"
-                strength = "weak"
-        elif last_bsp and last_bsp.is_buy:
-            action = "buy"
-            reason = f"无中枢，但出现 {last_bsp.type2str()} 买点"
-            strength = "medium"
-        elif last_bsp and not last_bsp.is_buy:
-            action = "reduce"
-            reason = f"无中枢，但出现 {last_bsp.type2str()} 卖点"
-            strength = "medium"
-        else:
-            action = "hold"
-            reason = "无明显买卖点，观望"
-
-        # 下一笔目标区间
-        next_targets = {"down": [], "up": []}
-        if latest_zs:
-            next_targets["down"] = [round(latest_zs.mid, 3), round(latest_zs.low, 3)]
-            next_targets["up"] = [round(latest_zs.high, 3)]
-            if last_bi:
-                if last_bi.is_up():
-                    next_targets["up"].append(round(last_bi._high() * 1.03, 3))
-                else:
-                    next_targets["down"].append(round(last_bi._low() * 0.97, 3))
-        elif last_bi:
-            if last_bi.is_up():
-                next_targets["up"] = [round(last_bi._high(), 3), round(last_bi._high() * 1.03, 3)]
-                next_targets["down"] = [round(last_bi._low(), 3)]
-            else:
-                next_targets["down"] = [round(last_bi._low(), 3), round(last_bi._low() * 0.97, 3)]
-                next_targets["up"] = [round(last_bi._high(), 3)]
-
-        return {
-            "code": code,
-            "level": level,
-            "timestamp": last_klu_time,
-            "current_price": current_price,
-            "current_bi": current_bi_state,
-            "last_seg_dir": last_seg.dir.name if last_seg else "",
-            "last_seg_sure": last_seg.is_sure if last_seg else False,
-            "latest_bsp": latest_bsp_info,
-            "key_levels": key_levels,
-            "signal": {
-                "action": action,
-                "reason": reason,
-                "strength": strength,
-            },
-            "next_targets": next_targets,
-            "status": "ok",
-            "error": "",
-        }
-    except Exception as e:
-        import traceback
-        return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
-
-
-def scan_watchlist(watchlist_path: str, level: str = "daily", condition: str = "last_bi_up") -> Dict[str, Any]:
-    try:
-        if not os.path.exists(watchlist_path):
-            return {"status": "error", "error": f"watchlist not found: {watchlist_path}"}
-
-        import csv
-        with open(watchlist_path, newline="", encoding="utf-8") as f:
-            rows = list(csv.reader(f))
-
-        result = []
-        for raw_code, name in rows:
-            raw_code = raw_code.strip()
-            name = name.strip()
-            res = analyze_stock(raw_code, level)
-            if res.get("status") != "ok":
-                continue
-
-            match = False
-            if condition == "last_bi_up" and res.get("last_bi_is_up"):
-                match = True
-            elif condition == "last_seg_up" and res.get("last_seg_dir") == "UP":
-                match = True
-            elif condition == "has_bsp" and res.get("bsp_count", 0) > 0:
-                match = True
-
-            if match:
-                result.append({
-                    "code": raw_code,
-                    "name": name,
-                    "last_bi_dir": res.get("last_bi_dir"),
-                    "last_seg_dir": res.get("last_seg_dir"),
-                    "latest_bsp": res.get("latest_bsp"),
-                    "key_levels": res.get("key_levels"),
-                })
-
-        return {"watchlist": watchlist_path, "level": level, "condition": condition, "count": len(result), "stocks": result, "status": "ok", "error": ""}
-    except Exception as e:
-        import traceback
-        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
-
-
-
-# ===== MCP JSON-RPC 处理 =====
 
 def send_message(msg: Dict[str, Any], use_framing: bool = True):
     payload = json.dumps(msg, ensure_ascii=False)
@@ -421,13 +61,10 @@ def log_debug(msg: str):
 
 def handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
     client_version = params.get("protocolVersion", "2024-11-05")
-    # accept any protocol version we can speak
     return {
         "protocolVersion": client_version if client_version in ("2024-11-05", "2025-11-26") else "2024-11-05",
-        "capabilities": {
-            "tools": {"listChanged": True}
-        },
-        "serverInfo": {"name": "chan-mcp-server", "version": "0.1.0"},
+        "capabilities": {"tools": {"listChanged": True}},
+        "serverInfo": {"name": "chan-mcp-server", "version": "0.2.0"},
     }
 
 
@@ -513,19 +150,19 @@ def handle_tools_call(params: Dict[str, Any]) -> Dict[str, Any]:
     args = params.get("arguments", {})
 
     if name == "analyze_stock":
-        result = analyze_stock(args.get("code"), args.get("level", "daily"), args.get("begin_date"))
+        result = chan_api.analyze(args.get("code"), args.get("level", "daily"), args.get("begin_date"))
     elif name == "get_bsp_list":
-        result = get_bsp_list(args.get("code"), args.get("level", "daily"), args.get("begin_date"), args.get("limit", 10))
+        result = chan_api.get_bsp_list(args.get("code"), args.get("level", "daily"), args.get("begin_date"), args.get("limit", 10))
     elif name == "get_key_levels":
-        result = get_key_levels(args.get("code"), args.get("level", "daily"), args.get("begin_date"))
+        result = chan_api.get_key_levels(args.get("code"), args.get("level", "daily"), args.get("begin_date"))
     elif name == "get_signal":
-        result = get_signal(args.get("code"), args.get("level", "daily"), args.get("begin_date"))
+        result = chan_api.get_signal(args.get("code"), args.get("level", "daily"), args.get("begin_date"))
     elif name == "scan_watchlist":
-        result = scan_watchlist(args.get("watchlist_path"), args.get("level", "daily"), args.get("condition", "last_bi_up"))
+        result = chan_api.scan_watchlist(args.get("watchlist_path"), args.get("level", "daily"), args.get("condition", "last_bi_up"))
     else:
         result = {"status": "error", "error": f"unknown tool: {name}"}
 
-    return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}], "isError": result.get("status") == "error"}
+    return _result_content(result)
 
 
 def main():
