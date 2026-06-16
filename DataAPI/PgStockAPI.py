@@ -7,26 +7,22 @@ from KLine.KLine_Unit import CKLine_Unit
 
 
 class CPgStock(CCommonStockApi):
-    """从 stockmind PostgreSQL 读取日线数据。"""
-
-    _conn_params = {
-        "host": "72.62.197.172",
-        "port": 5432,
-        "dbname": "digi-agents",
-        "user": "digi",
-        "password": "digi123",
-    }
+    """从 stockmind PostgreSQL 读取数据。"""
 
     def __init__(self, code, k_type=KL_TYPE.K_DAY, begin_date=None, end_date=None, autype=AUTYPE.QFQ):
         super(CPgStock, self).__init__(code, k_type, begin_date, end_date, autype)
+        try:
+            from stockmind.core.config import DB_CONFIG
+            self._conn_params = DB_CONFIG
+        except ImportError:
+            self._conn_params = {
+                "host": "72.62.197.172", "port": 5432,
+                "dbname": "digi-agents", "user": "digi", "password": "digi123",
+            }
 
     def SetBasciInfo(self):
         self.name = None
         self.is_stock = True
-
-    @classmethod
-    def do_init(cls):
-        pass
 
     @classmethod
     def do_close(cls):
@@ -60,6 +56,9 @@ class CPgStock(CCommonStockApi):
                 cur.execute(sql, params)
                 rows = cur.fetchall()
 
+        if not rows:
+            raise ValueError(f"CPgStock: no daily data for {self.code} from {self.begin_date or 'begin'}")
+
         for trade_date, open_, high, low, close, volume, amount, turnover_rate in rows:
             item = {
                 DATA_FIELD.FIELD_TIME: CTime(trade_date.year, trade_date.month, trade_date.day, 0, 0),
@@ -92,6 +91,9 @@ class CPgStock(CCommonStockApi):
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
+
+        if not rows:
+            raise ValueError(f"CPgStock: no 30min data for {self.code} from {self.begin_date or 'begin'}")
 
         for dt, open_, high, low, close, volume in rows:
             item = {
