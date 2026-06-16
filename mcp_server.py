@@ -30,29 +30,39 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from Chan import CChan
-from ChanConfig import CChanConfig
-from Common.CEnum import AUTYPE, KL_TYPE
-
 
 LEVEL_MAP = {
-    "daily": KL_TYPE.K_DAY,
-    "day": KL_TYPE.K_DAY,
-    "d": KL_TYPE.K_DAY,
-    "30m": KL_TYPE.K_30M,
-    "30min": KL_TYPE.K_30M,
-    "60m": KL_TYPE.K_60M,
-    "60min": KL_TYPE.K_60M,
+    "daily": "K_DAY",
+    "day": "K_DAY",
+    "d": "K_DAY",
+    "30m": "K_30M",
+    "30min": "K_30M",
+    "60m": "K_60M",
+    "60min": "K_60M",
 }
 
 
-def get_default_begin(level: KL_TYPE) -> str:
+def _import_chan():
+    from Chan import CChan
+    from ChanConfig import CChanConfig
+    from Common.CEnum import AUTYPE, KL_TYPE
+    return CChan, CChanConfig, AUTYPE, KL_TYPE
+
+
+def _resolve_level(level: str):
+    CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
+    enum_name = LEVEL_MAP.get(level.lower(), "K_DAY")
+    return getattr(KL_TYPE, enum_name)
+
+
+def get_default_begin(level) -> str:
+    from Common.CEnum import KL_TYPE
     if level == KL_TYPE.K_30M:
         return "2026-03-13"
     return "2025-09-04"
 
 
-def create_chan_config():
+def create_chan_config(CChanConfig):
     return CChanConfig({
         "bi_strict": True,
         "trigger_step": False,
@@ -68,9 +78,16 @@ def create_chan_config():
     })
 
 
+def _resolve_level(level: str):
+    CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
+    enum_name = LEVEL_MAP.get(level.lower(), "K_DAY")
+    return getattr(KL_TYPE, enum_name)
+
+
 def analyze_stock(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
     try:
-        kl_type = LEVEL_MAP.get(level.lower(), KL_TYPE.K_DAY)
+        CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
+        kl_type = _resolve_level(level)
         if begin_date is None:
             begin_date = get_default_begin(kl_type)
 
@@ -80,7 +97,7 @@ def analyze_stock(code: str, level: str = "daily", begin_date: Optional[str] = N
             end_time=None,
             data_src="custom:PgStockAPI.CPgStock",
             lv_list=[kl_type],
-            config=create_chan_config(),
+            config=create_chan_config(CChanConfig),
             autype=AUTYPE.QFQ,
         )
 
@@ -134,12 +151,14 @@ def analyze_stock(code: str, level: str = "daily", begin_date: Optional[str] = N
             "error": "",
         }
     except Exception as e:
-        return {"code": code, "level": level, "status": "error", "error": str(e)}
+        import traceback
+        return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
 
 
 def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
     try:
-        kl_type = LEVEL_MAP.get(level.lower(), KL_TYPE.K_DAY)
+        CChan, CChanConfig, AUTYPE, KL_TYPE = _import_chan()
+        kl_type = _resolve_level(level)
         if begin_date is None:
             begin_date = get_default_begin(kl_type)
 
@@ -149,7 +168,7 @@ def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = No
             end_time=None,
             data_src="custom:PgStockAPI.CPgStock",
             lv_list=[kl_type],
-            config=create_chan_config(),
+            config=create_chan_config(CChanConfig),
             autype=AUTYPE.QFQ,
         )
 
@@ -165,7 +184,8 @@ def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = No
 
         return {"code": code, "level": level, "bsp_list": result, "status": "ok", "error": ""}
     except Exception as e:
-        return {"code": code, "level": level, "status": "error", "error": str(e)}
+        import traceback
+        return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
 
 
 def get_key_levels(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
@@ -183,9 +203,6 @@ def get_key_levels(code: str, level: str = "daily", begin_date: Optional[str] = 
 
 
 def scan_watchlist(watchlist_path: str, level: str = "daily", condition: str = "last_bi_up") -> Dict[str, Any]:
-    """
-    扫描股票列表，condition 可选：last_bi_up, last_seg_up, has_bsp
-    """
     try:
         if not os.path.exists(watchlist_path):
             return {"status": "error", "error": f"watchlist not found: {watchlist_path}"}
@@ -222,23 +239,43 @@ def scan_watchlist(watchlist_path: str, level: str = "daily", condition: str = "
 
         return {"watchlist": watchlist_path, "level": level, "condition": condition, "count": len(result), "stocks": result, "status": "ok", "error": ""}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        import traceback
+        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+
 
 
 # ===== MCP JSON-RPC 处理 =====
 
-def send_message(msg: Dict[str, Any]):
+def send_message(msg: Dict[str, Any], use_framing: bool = True):
     payload = json.dumps(msg, ensure_ascii=False)
-    sys.stdout.write(f"Content-Length: {len(payload.encode('utf-8'))}\r\n\r\n{payload}")
+    if use_framing:
+        data = f"Content-Length: {len(payload.encode('utf-8'))}\r\n\r\n{payload}"
+    else:
+        data = payload + "\n"
+    sys.stdout.write(data)
     sys.stdout.flush()
 
 
+def log_debug(msg: str):
+    if os.environ.get("CHAN_MCP_DEBUG"):
+        sys.stderr.write(f"[chan-mcp] {msg}\n")
+        sys.stderr.flush()
+
+
 def handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
+    client_version = params.get("protocolVersion", "2024-11-05")
+    # accept any protocol version we can speak
     return {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {"tools": {}},
+        "protocolVersion": client_version if client_version in ("2024-11-05", "2025-11-26") else "2024-11-05",
+        "capabilities": {
+            "tools": {"listChanged": True}
+        },
         "serverInfo": {"name": "chan-mcp-server", "version": "0.1.0"},
     }
+
+
+def handle_ping(params: Dict[str, Any]) -> Dict[str, Any]:
+    return {}
 
 
 def handle_tools_list(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -320,36 +357,64 @@ def handle_tools_call(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main():
+    use_framing = True
     while True:
-        line = sys.stdin.readline()
-        if not line:
-            break
+        try:
+            line = sys.stdin.readline()
+            if not line:
+                break
 
-        if not line.startswith("Content-Length:"):
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("Content-Length:"):
+                use_framing = True
+                length = int(line.split(":", 1)[1].strip())
+                term = sys.stdin.read(2)
+                if term != "\r\n":
+                    log_debug(f"unexpected header terminator: {repr(term)}")
+                    continue
+                body = sys.stdin.read(length)
+            else:
+                use_framing = False
+                body = line
+
+            try:
+                req = json.loads(body)
+            except json.JSONDecodeError as e:
+                log_debug(f"json decode error: {e}, body={body[:200]}")
+                continue
+
+            method = req.get("method")
+            req_id = req.get("id")
+            params = req.get("params", {})
+
+            log_debug(f"recv method={method} id={req_id} framing={use_framing}")
+
+            if method == "initialize":
+                result = handle_initialize(params)
+            elif method == "$/ping":
+                result = handle_ping(params)
+            elif method == "tools/list":
+                result = handle_tools_list(params)
+            elif method == "tools/call":
+                result = handle_tools_call(params)
+            elif method == "notifications/initialized":
+                log_debug("client initialized")
+                continue
+            elif method and method.startswith("$/"):
+                continue
+            else:
+                result = {"error": {"code": -32601, "message": f"method not found: {method}"}}
+
+            if req_id is not None:
+                send_message({"jsonrpc": "2.0", "id": req_id, "result": result}, use_framing=use_framing)
+        except Exception as e:
+            log_debug(f"main loop error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             continue
-
-        length = int(line.split(":")[1].strip())
-        sys.stdin.read(2)  # \r\n
-        body = sys.stdin.read(length)
-        req = json.loads(body)
-
-        method = req.get("method")
-        req_id = req.get("id")
-        params = req.get("params", {})
-
-        if method == "initialize":
-            result = handle_initialize(params)
-        elif method == "tools/list":
-            result = handle_tools_list(params)
-        elif method == "tools/call":
-            result = handle_tools_call(params)
-        elif method == "notifications/initialized":
-            continue
-        else:
-            result = {"error": {"code": -32601, "message": f"method not found: {method}"}}
-
-        if req_id is not None:
-            send_message({"jsonrpc": "2.0", "id": req_id, "result": result})
 
 
 if __name__ == "__main__":
