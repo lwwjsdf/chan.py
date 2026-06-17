@@ -61,7 +61,8 @@ def _make_config():
     })
 
 
-def _run_chan(code: str, level: str, begin_date: Optional[str] = None):
+def create_chan(code: str, level: str = "daily", begin_date: Optional[str] = None):
+    """创建缠论分析实例，返回 CChan 对象。"""
     kl_type = _resolve_level(level)
     if begin_date is None:
         begin_date = _default_begin_date(kl_type)
@@ -111,7 +112,7 @@ def _bsp_to_dict(bsp):
 def analyze(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
     """分析单只股票缠论状态"""
     try:
-        chan = _run_chan(code, level, begin_date)
+        chan = create_chan(code, level, begin_date)
         kl_list = chan[0]
         bi_list = kl_list.bi_list
         seg_list = kl_list.seg_list
@@ -148,67 +149,12 @@ def analyze(code: str, level: str = "daily", begin_date: Optional[str] = None) -
 def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
     """获取近期买卖点列表"""
     try:
-        chan = _run_chan(code, level, begin_date)
+        chan = create_chan(code, level, begin_date)
         bsp_list = chan[0].bs_point_lst.getSortedBspList()
         result = [_bsp_to_dict(bsp) for bsp in bsp_list[-limit:]]
         return {"code": code, "level": level, "bsp_list": result, "status": "ok", "error": ""}
     except Exception as e:
         return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
-
-
-def analyze_with_bsp(code: str, level: str = "daily", begin_date: Optional[str] = None, bsp_limit: int = 20) -> Dict[str, Any]:
-    """
-    单次 CChan 调用，同时返回 analyze 结果和完整 BSP 列表。
-
-    性能优化：避免 analyze() 和 get_bsp_list() 各调一次 CChan。
-    """
-    try:
-        chan = _run_chan(code, level, begin_date)
-        kl_list = chan[0]
-        bi_list = kl_list.bi_list
-        seg_list = kl_list.seg_list
-        zs_list = kl_list.zs_list
-        bsp_list = kl_list.bs_point_lst.getSortedBspList()
-
-        last_bi = bi_list[-1] if bi_list else None
-        last_seg = seg_list[-1] if seg_list else None
-        last_bsp = bsp_list[-1] if bsp_list else None
-        last_zs = zs_list[-1] if zs_list else None
-
-        bsp_dicts = [_bsp_to_dict(b) for b in bsp_list[-bsp_limit:]]
-        buys = [b for b in bsp_dicts if b.get("is_buy")]
-        sells = [b for b in bsp_dicts if not b.get("is_buy")]
-
-        return {
-            "code": code,
-            "level": level,
-            "klu_count": len(kl_list.lst),
-            "bi_count": len(bi_list),
-            "seg_count": len(seg_list),
-            "zs_count": len(zs_list),
-            "bsp_count": len(bsp_list),
-            "current_price": _extract_current_price(kl_list),
-            "last_bi_dir": last_bi.dir.name if last_bi else "",
-            "last_bi_is_up": last_bi.is_up() if last_bi else False,
-            "last_seg_dir": last_seg.dir.name if last_seg else "",
-            "last_seg_sure": last_seg.is_sure if last_seg else False,
-            "latest_bsp": _bsp_to_dict(last_bsp),
-            "key_levels": _extract_key_levels(last_bi, last_seg, last_zs),
-            "bsp_list": bsp_dicts,
-            "buy_points": buys,
-            "sell_points": sells,
-            "buy_cnt": len(buys),
-            "sell_cnt": len(sells),
-            "status": "ok",
-            "error": "",
-        }
-    except Exception as e:
-        return {
-            "code": code, "level": level, "status": "error",
-            "error": str(e), "traceback": traceback.format_exc(),
-            "bsp_list": [], "buy_points": [], "sell_points": [],
-            "buy_cnt": 0, "sell_cnt": 0,
-        }
 
 
 def get_key_levels(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
@@ -232,7 +178,7 @@ def get_signal(code: str, level: str = "daily", begin_date: Optional[str] = None
     获取交易信号：当前笔状态、买卖点、中枢位置、建议操作。
     """
     try:
-        chan = _run_chan(code, level, begin_date)
+        chan = create_chan(code, level, begin_date)
         kl_list = chan[0]
         bi_list = kl_list.bi_list
         seg_list = kl_list.seg_list
