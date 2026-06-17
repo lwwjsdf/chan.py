@@ -23,6 +23,9 @@ LEVEL_MAP = {
     "30min": "K_30M",
     "60m": "K_60M",
     "60min": "K_60M",
+    "weekly": "K_WEEK",
+    "week": "K_WEEK",
+    "w": "K_WEEK",
 }
 
 BUY_TYPES = ('1', '2', '2s', '3a')
@@ -37,6 +40,8 @@ def _resolve_level(level: str) -> KL_TYPE:
 def _default_begin_date(level: KL_TYPE) -> str:
     if level == KL_TYPE.K_30M:
         return "2026-03-01"
+    if level == KL_TYPE.K_WEEK:
+        return "2024-01-01"
     return "2025-09-04"
 
 
@@ -149,6 +154,61 @@ def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = No
         return {"code": code, "level": level, "bsp_list": result, "status": "ok", "error": ""}
     except Exception as e:
         return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
+
+
+def analyze_with_bsp(code: str, level: str = "daily", begin_date: Optional[str] = None, bsp_limit: int = 20) -> Dict[str, Any]:
+    """
+    单次 CChan 调用，同时返回 analyze 结果和完整 BSP 列表。
+
+    性能优化：避免 analyze() 和 get_bsp_list() 各调一次 CChan。
+    """
+    try:
+        chan = _run_chan(code, level, begin_date)
+        kl_list = chan[0]
+        bi_list = kl_list.bi_list
+        seg_list = kl_list.seg_list
+        zs_list = kl_list.zs_list
+        bsp_list = kl_list.bs_point_lst.getSortedBspList()
+
+        last_bi = bi_list[-1] if bi_list else None
+        last_seg = seg_list[-1] if seg_list else None
+        last_bsp = bsp_list[-1] if bsp_list else None
+        last_zs = zs_list[-1] if zs_list else None
+
+        bsp_dicts = [_bsp_to_dict(b) for b in bsp_list[-bsp_limit:]]
+        buys = [b for b in bsp_dicts if b.get("is_buy")]
+        sells = [b for b in bsp_dicts if not b.get("is_buy")]
+
+        return {
+            "code": code,
+            "level": level,
+            "klu_count": len(kl_list.lst),
+            "bi_count": len(bi_list),
+            "seg_count": len(seg_list),
+            "zs_count": len(zs_list),
+            "bsp_count": len(bsp_list),
+            "current_price": _extract_current_price(kl_list),
+            "last_bi_dir": last_bi.dir.name if last_bi else "",
+            "last_bi_is_up": last_bi.is_up() if last_bi else False,
+            "last_seg_dir": last_seg.dir.name if last_seg else "",
+            "last_seg_sure": last_seg.is_sure if last_seg else False,
+            "latest_bsp": _bsp_to_dict(last_bsp),
+            "key_levels": _extract_key_levels(last_bi, last_seg, last_zs),
+            "bsp_list": bsp_dicts,
+            "buy_points": buys,
+            "sell_points": sells,
+            "buy_cnt": len(buys),
+            "sell_cnt": len(sells),
+            "status": "ok",
+            "error": "",
+        }
+    except Exception as e:
+        return {
+            "code": code, "level": level, "status": "error",
+            "error": str(e), "traceback": traceback.format_exc(),
+            "bsp_list": [], "buy_points": [], "sell_points": [],
+            "buy_cnt": 0, "sell_cnt": 0,
+        }
 
 
 def get_key_levels(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
