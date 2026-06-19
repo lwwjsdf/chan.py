@@ -166,6 +166,7 @@ class CPlotDriver:
         x_range = self.GetRealXrange(figure_config, plot_metas[0])
         plot_macd: Dict[KL_TYPE, bool] = {kl_type: conf.get("plot_macd", False) for kl_type, conf in plot_config.items()}
         self.figure, axes = create_figure(plot_macd, figure_config, self.lv_lst)
+        self.axes = axes
 
         sseg_begin = 0
         slv_seg_cnt = plot_para.get('seg', {}).get('sub_lv_cnt', None)
@@ -285,7 +286,64 @@ class CPlotDriver:
             show_func_helper(eval(f'self.{func}'))
 
     def save2img(self, path):
+        self._add_legend()
+        self._annotate_seg_prices()
         plt.savefig(path, bbox_inches='tight')
+
+    def _annotate_seg_prices(self):
+        """在线段顶点标注价格。"""
+        import matplotlib
+        for font in ["Arial Unicode MS", "Heiti TC", "Hiragino Sans GB"]:
+            try:
+                matplotlib.rcParams["font.family"] = [font]
+                break
+            except Exception:
+                continue
+        matplotlib.rcParams["axes.unicode_minus"] = False
+        ax = self.axes[self.lv_lst[0]][0]
+        x_begin = ax.get_xlim()[0]
+        for line in ax.lines:
+            lw = line.get_linewidth()
+            color = line.get_color()
+            xy = line.get_xydata()
+            if lw >= 4 and color == 'g' and len(xy) == 2:
+                x0, y0 = xy[0]
+                x1, y1 = xy[1]
+                if x0 >= x_begin:
+                    ax.text(x0, y0, f"{y0:.2f}", fontsize=8, color='green',
+                            verticalalignment='bottom' if y0 < y1 else 'top',
+                            horizontalalignment='center',
+                            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor='green', linewidth=0.5))
+                if x1 >= x_begin:
+                    ax.text(x1, y1, f"{y1:.2f}", fontsize=8, color='green',
+                            verticalalignment='bottom' if y1 < y0 else 'top',
+                            horizontalalignment='center',
+                            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor='green', linewidth=0.5))
+
+    def _add_legend(self):
+        """在图表左上角添加中文图例，解释各颜色/线型含义。"""
+        import matplotlib
+        import matplotlib.lines as mlines
+        for font in ["Arial Unicode MS", "Heiti TC", "Hiragino Sans GB"]:
+            try:
+                matplotlib.rcParams["font.family"] = [font]
+                break
+            except Exception:
+                continue
+        matplotlib.rcParams["axes.unicode_minus"] = False
+        ax = self.axes[self.lv_lst[0]][0]
+        legend_items = [
+            ("笔", "black", "-", 1.5),
+            ("确认线段", "green", "-", 5),
+            ("未确认线段", "green", "--", 5),
+            ("中枢", "orange", "-", 2),
+            ("买点", "red", "-", 1),
+            ("卖点", "green", "-", 1),
+        ]
+        handles = []
+        for label, color, linestyle, linewidth in legend_items:
+            handles.append(mlines.Line2D([], [], color=color, linestyle=linestyle, linewidth=linewidth, label=label))
+        ax.legend(handles=handles, loc='upper left', fontsize=9, framealpha=0.9)
 
     def draw_klu(self, meta: CChanPlotMeta, ax: Axes, width=0.4, rugd=True, plot_mode="kl"):
         # rugd: red up green down
@@ -386,7 +444,7 @@ class CPlotDriver:
         sub_lv_cnt=None,
         facecolor='green',
         alpha=0.1,
-        disp_end=False,
+        disp_end=True,
         end_color='g',
         end_fontsize=13,
         plot_trendline=False,

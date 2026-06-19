@@ -157,6 +157,84 @@ def get_bsp_list(code: str, level: str = "daily", begin_date: Optional[str] = No
         return {"code": code, "level": level, "status": "error", "error": str(e), "traceback": traceback.format_exc()}
 
 
+def plot_chart(code: str, level: str = "daily", begin_date: Optional[str] = None,
+               out_path: Optional[str] = None,
+               plot_config: Optional[Dict[str, bool]] = None,
+               plot_para: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    使用 CPlotDriver 生成缠论结构图。
+
+    Args:
+        code: 股票代码
+        level: daily/30m/60m/weekly
+        begin_date: 开始日期
+        out_path: 输出图片路径（默认 stockmind_reports/chan_代码.png）
+        plot_config: 画图开关配置
+        plot_para: 画图样式参数
+
+    Returns:
+        {"status": "ok", "path": "...", "kl_count": ..., "bi_count": ..., "seg_count": ..., "zs_count": ..., "bsp_count": ...}
+    """
+    try:
+        import os
+        import matplotlib
+        matplotlib.use("Agg")
+        from Plot.PlotDriver import CPlotDriver
+
+        chan = create_chan(code, level, begin_date)
+        kl_list = chan[0]
+
+        if out_path is None:
+            root = os.environ.get("STOCKMIND_ROOT", os.path.join(os.path.dirname(__file__), "..", ".."))
+            out_dir = os.path.join(root, "stockmind_reports")
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(out_dir, f"chan_{code}_{level}.png")
+
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        default_config = {
+            "plot_kline": True,
+            "plot_kline_combine": True,
+            "plot_bi": True,
+            "plot_seg": True,
+            "plot_eigen": False,
+            "plot_zs": True,
+            "plot_macd": True,
+            "plot_mean": False,
+            "plot_channel": False,
+            "plot_bsp": True,
+            "plot_extrainfo": False,
+        }
+        if plot_config:
+            default_config.update(plot_config)
+
+        default_para = {
+            "seg": {"plot_trendline": False},
+            "bi": {"show_num": False, "disp_end": False, "color": "black"},
+            "figure": {"x_range": 0},
+        }
+        if plot_para:
+            default_para.update(plot_para)
+
+        plot_driver = CPlotDriver(chan, plot_config=default_config, plot_para=default_para)
+        plot_driver.save2img(out_path)
+
+        return {
+            "status": "ok",
+            "path": out_path,
+            "code": code,
+            "level": level,
+            "kl_count": len(kl_list.lst),
+            "bi_count": len(kl_list.bi_list),
+            "seg_count": len(kl_list.seg_list),
+            "zs_count": len(kl_list.zs_list),
+            "bsp_count": len(kl_list.bs_point_lst),
+            "error": "",
+        }
+    except Exception as e:
+        return {"status": "error", "code": code, "level": level, "error": str(e), "traceback": traceback.format_exc()}
+
+
 def get_key_levels(code: str, level: str = "daily", begin_date: Optional[str] = None) -> Dict[str, Any]:
     """获取关键价位"""
     res = analyze(code, level, begin_date)
